@@ -1,33 +1,28 @@
-const dns = require("node:dns");
-
-// Fix Node.js DNS SRV lookup issue
-dns.setServers(["8.8.8.8", "8.8.4.4"]);
-
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
 require("dotenv").config();
 
-const express = require("express");
-const cors = require("cors");
-const connectDB = require("./config/db");
+const taskRoutes = require("./routes/taskRoutes");
 
 const app = express();
 
+// 1. CORS Configuration (Preview URLs + Production Domains)
 const allowedOrigins = [
   "http://localhost:5173",
+  "http://localhost:3000",
+  "https://devtask-amla.vercel.app",
   "https://dev-task-ab2k.vercel.app",
-  "https://dev-task-ab2k-mgeybq6gu-dev-hub12.vercel.app",
-  process.env.CLIENT_URL,
-].filter(Boolean);
+];
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow requests with no origin (like curl, Postman, server-to-server)
-      if (!origin) {
-        return callback(null, true);
-      }
+      // Postman / curl / same-origin requests without Origin header
+      if (!origin) return callback(null, true);
 
       const isAllowedExact = allowedOrigins.includes(origin);
-      const isVercelPreview = /^https:\/\/dev-task-ab2k(-[a-z0-9-]+)*\.vercel\.app$/i.test(
+      const isVercelPreview = /^https:\/\/dev-task-ab2k.*\.vercel\.app$/.test(
         origin
       );
 
@@ -37,34 +32,80 @@ app.use(
 
       return callback(new Error("Not allowed by CORS"));
     },
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
 app.use(express.json());
 
-// Test API
+// 2. Cached MongoDB Connection for Vercel Serverless
+let cached = global.mongoose;
+if (!cached) {
+  cached = global.mongoose = { conn: null, promise: null };
+}
+
+async function connectDB() {
+  if (cached.conn) {
+    return cached.conn;
+  }
+
+  const uri = process.env.MONGO_URI || process.env.MONGODB_URI;
+  if (!uri) {
+    throw new Error("MongoDB connection string is missing in environment variables.");
+  }
+
+  if (!cached.promise) {
+    cached.promise = mongoose
+      .connect(uri, {
+        serverSelectionTimeoutMS: 10000,
+        socketTimeoutMS: 45000,
+      })
+      .then((mongooseInstance) => mongooseInstance);
+  }
+
+  try {
+    cached.conn = await cached.promise;
+  } catch (err) {
+    cached.promise = null;
+    throw err;
+  }
+
+  return cached.conn;
+}
+
+// 3. Ensure DB is connected before handling API routes
+app.use("/api", async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    console.error("Database connection error:", error.message);
+    res.status(500).json({ message: "Database connection failed", error: error.message });
+  }
+});
+
+// Root health route
 app.get("/", (req, res) => {
-  res.json({
-    message: "DevTask API is Running!",
-  });
+  res.json({ message: "DevTask API is Running!" });
 });
 
-// Task API
-app.use("/api/tasks", require("./routes/taskRoutes"));
+// Task routes
+app.use("/api/tasks", taskRoutes);
 
-// Ensure DB connection is initialized
-connectDB().catch((error) => {
-  console.error("Database connection error:", error.message);
-});
-
-// Start listening locally / non-Vercel environments
-if (!process.env.VERCEL) {
+// Local development server (Vercel uses exported app)
+if (process.env.VERCEL !== "1") {
   const PORT = process.env.PORT || 5000;
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
+  connectDB()
+    .then(() => {
+      app.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`);
+      });
+    })
+    .catch((err) => {
+      console.error("Failed to start server:", err.message);
+    });
 }
 
 module.exports = app;
