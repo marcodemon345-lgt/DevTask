@@ -14,6 +14,7 @@ const app = express();
 const allowedOrigins = [
   "http://localhost:5173",
   "https://dev-task-ab2k.vercel.app",
+  "https://dev-task-ab2k-mgeybq6gu-dev-hub12.vercel.app",
   process.env.CLIENT_URL,
 ].filter(Boolean);
 
@@ -21,9 +22,19 @@ app.use(
   cors({
     origin: function (origin, callback) {
       // Allow requests with no origin (like curl, Postman, server-to-server)
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin) {
         return callback(null, true);
       }
+
+      const isAllowedExact = allowedOrigins.includes(origin);
+      const isVercelPreview = /^https:\/\/dev-task-ab2k(-[a-z0-9-]+)*\.vercel\.app$/i.test(
+        origin
+      );
+
+      if (isAllowedExact || isVercelPreview) {
+        return callback(null, true);
+      }
+
       return callback(new Error("Not allowed by CORS"));
     },
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
