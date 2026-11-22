@@ -1,4 +1,3 @@
-
 const dns = require("node:dns");
 
 // Fix Node.js DNS SRV lookup issue
@@ -12,35 +11,49 @@ const connectDB = require("./config/db");
 
 const app = express();
 
-app.use(cors({
-  origin: "http://localhost:5173"
-}));
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://dev-task-ab2k.vercel.app",
+  process.env.CLIENT_URL,
+].filter(Boolean);
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like curl, Postman, server-to-server)
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("Not allowed by CORS"));
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    credentials: true,
+  })
+);
 
 app.use(express.json());
 
 // Test API
 app.get("/", (req, res) => {
   res.json({
-    message: "DevTask API is Running!"
+    message: "DevTask API is Running!",
   });
 });
 
 // Task API
 app.use("/api/tasks", require("./routes/taskRoutes"));
 
-const startServer = async () => {
-  try {
-    await connectDB();
+// Ensure DB connection is initialized
+connectDB().catch((error) => {
+  console.error("Database connection error:", error.message);
+});
 
-    const PORT = process.env.PORT || 5000;
+// Start listening locally / non-Vercel environments
+if (!process.env.VERCEL) {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
 
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
-  } catch (error) {
-    console.error("Server startup failed:", error.message);
-    process.exit(1);
-  }
-};
-
-startServer();
+module.exports = app;
